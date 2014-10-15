@@ -48,7 +48,7 @@ cabal-version:       >=1.10
 
 library
   -- Modules exported by the library.
-  exposed-modules:     Data.Avc, Data.Avc.Parser, Data.Avc.Encode, Data.Avc.Type
+  exposed-modules:     Data.Avc, Data.Avc.Parser, Data.Avc.Encode, Data.Avc.Type, Data.Avc.Util
   
   -- Modules included in this library but not exported.
   -- other-modules:       
