@@ -10,9 +10,7 @@
 -- make it return "Partial _"
 -- TODO: keep track of line numbers in case of failure
 
-module Data.Avc.Parser
-    (Signal, Comment, Statement, parseAvcFile
-    ) where
+module Data.Avc.Parser (parseAvcFile) where
 
 import Codec.Compression.GZip
 import qualified Data.ByteString.Lazy.Char8 as BL
