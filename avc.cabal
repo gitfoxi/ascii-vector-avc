@@ -2,7 +2,7 @@
 -- see http://haskell.org/cabal/users-guide/
 
 -- The name of the package.
-name:                Avc
+name:                ascii-vector-avc
 
 -- The package version.  See the Haskell package versioning policy (PVP) 
 -- for standards guiding when and how versions should be incremented.
@@ -13,7 +13,7 @@ name:                Avc
 version:             0.1.0.0
 
 -- A short (one-line) description of the package.
-synopsis:            Process Ascii Vectors
+synopsis:            Process Ascii Vectors for Advantest 93k
 
 -- A longer description of the package.
 -- description:         
@@ -48,7 +48,7 @@ cabal-version:       >=1.10
 
 library
   -- Modules exported by the library.
-  exposed-modules:     Data.Avc
+  exposed-modules:     Data.Avc, Data.Avc.Parser, Data.Avc.Type
   
   -- Modules included in this library but not exported.
   -- other-modules:       
@@ -57,10 +57,10 @@ library
   other-extensions:    OverloadedStrings, NoMonomorphismRestriction, FlexibleContexts, DeriveGeneric
   
   -- Other library packages from which modules are imported.
-  build-depends:       base >=4.7 && <4.8, zlib >=0.5 && <0.6, bytestring >=0.10 && <0.11, deepseq >=1.3 && <1.4, deepseq-generics >=0.1 && <0.2, attoparsec >=0.12 && <0.13, HUnit >=1.2 && <1.3, split >=0.2 && <0.3
+  build-depends:       base >=4.7 && <4.8, zlib >=0.5 && <0.6, bytestring >=0.10 && <0.11, deepseq >=1.3 && <1.4, deepseq-generics >=0.1 && <0.2, attoparsec >=0.12 && <0.13, HUnit >=1.2 && <1.3, split >=0.2 && <0.3, binary >=0.7
   
   -- Directories containing source files.
-  hs-source-dirs:      src, src/Data
+  hs-source-dirs:      src
   
   -- Base language which the package is written in.
   default-language:    Haskell2010

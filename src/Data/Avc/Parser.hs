@@ -1,14 +1,21 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE DeriveGeneric #-}
 
--- TODO: Hackage, git
+-- TODO: Hackage, github, haddock, tests
+-- TODO: isGzipped to a personal utility package; readAndDecompress
+--       like readFile but if Gzipped will also decompress
+-- TODO: Only works with parseOnly beause I decided to do special handling of
+-- putting this into statements so trailing space at the end of the file will
+-- make it return "Partial _"
+-- TODO: keep track of line numbers in case of failure
 
-module Data.Avc where
+module Data.Avc.Parser
+    (Signal, Comment, Statement, parseAvcFile
+    ) where
 
 import Codec.Compression.GZip
-import qualified Data.ByteString.Lazy.Char8 as BL (readFile, lines, toStrict)
+import qualified Data.ByteString.Lazy.Char8 as BL
 
 import Control.DeepSeq
 import Control.DeepSeq.Generics (genericRnf)
@@ -33,31 +40,39 @@ import qualified Prelude as P
 
 import Data.Char as DC (isLetter, isDigit)
 
-avcfile :: String
-avcfile = "bist_l2c_m24r1s2d12_dll_pp__010_20140828.avc.gz"
-avcfile2 = "bist_l2c_m24r1s2d12_dll_pp__010_20140828.avc"
+import Data.Binary.Get (runGet, getWord16le)
 
-type Rep = Int
-type DevCyc = ByteString
-type Vec = ByteString  -- TODO: Vector
-type Name = ByteString
+import Data.Avc.Type
 
-data Signal = Sig Name
-            | SigGroup Name -- TODO: need pin-config file to implement
-            deriving (Show, Eq, Generic)
+-- | Parse a simple AVC which may be gzipped
+-- Only handles simple files with one character per state like:
+--
+-- # Begin AVC
+-- FORMAT a b c;
+-- R10 10X ; vector comment # other comment
+-- R10 01H ;
+parseAvcFile :: FilePath -> IO [Statement]
+parseAvcFile filename = do
+    content <- decompressFile filename
+    let strict = BL.toStrict content
+    let ls = BS.lines strict
+    let ncmnt = nocomment ls
+    let stmts = joinStatements ncmnt
+    return $ getStatements stmts
 
-data Comment = Comment ByteString
-             | CNil
-             deriving (Show, Eq, Generic)
+-- TODO: put this in my utility module
+decompressFile :: FilePath -> IO BL.ByteString
+decompressFile filename = do
+    bs <- BL.readFile filename
+    isgz <- isGzipped bs
+    let decompressed = decompress bs
+    return $ if isgz then decompressed else bs
 
-data Statement = Repeat Rep DevCyc Vec Comment
-               | Format [Signal] Comment
-               | EOF
-               deriving (Show, Eq, Generic)
-
-instance NFData Signal where rnf = genericRnf
-instance NFData Comment where rnf = genericRnf
-instance NFData Statement where rnf = genericRnf
+isGzipped :: BL.ByteString -> IO Bool
+isGzipped bs = do
+    let magic = runGet getWord16le bs
+    return $ magic == 0x8b1f
+-- /utility
 
 -- | Strip # comments from a list of lines
 nocomment :: [ByteString] -> [ByteString]
@@ -81,6 +96,10 @@ getFormat bs =
                     Left e -> error ("Error parsing FORMAT: " ++ show e ++ "\nInput:" ++ show bs)
                     Right r -> r
 
+getStatements :: [ByteString] -> [Statement]
+getStatements = P.map getStatement
+
+-- getStatement "R1 cyc 123" -- TODO: doesn't return. some kind of inifinite loop without the ';'
 getStatement bs =
     case parseOnly (skipSpace *> parseStatement) bs of
                     Left e -> error ("Error parsing FORMAT: " ++ show e ++ "\nInput:" ++ show bs)
@@ -97,11 +116,16 @@ parseEof = do
     endOfInput
     return EOF
 
+-- Parser A is like parser b but it skips trailing spaces
+-- TODO: returns "Partial _" if space until EOF
+lexeme :: Parser a -> Parser a
+lexeme pa = pa <* skipSpace
+
 parseRepeat :: Parser Statement
 parseRepeat = Repeat <$> (keyword "R" *> rep) <*> devcyc <*> parseVec <*> parseComment
     where
-        rep = decimal <* skipSpace
-        devcyc = takeWhile1 isVecChar <* skipSpace
+        rep = lexeme decimal
+        devcyc = lexeme $ takeWhile1 isVecChar
 
 isVecChar :: Char -> Bool
 isVecChar c = A.isAlpha_ascii c || A.isDigit c
@@ -111,10 +135,6 @@ parseVec :: Parser ByteString
 parseVec = do
     vec <- manyTill (skipSpace *> A.takeWhile isVecChar) (skipSpace *> semicolon)
     return $ BS.concat vec
-
-
-getStatements :: [ByteString] -> [Statement]
-getStatements = P.map getStatement
 
 
 parseFail :: String -> ByteString -> [String] -> String -> Statement
@@ -130,7 +150,7 @@ parseLeftover trying leftover = error $ "Leftover input trying: " ++ trying ++ "
 parseFormat' :: Parser Statement
 parseFormat' = Format <$> (keyword "FORMAT" *> sigs) <*> parseComment <?> "FORMAT"
     where 
-        sigs = manyTill (skipSpace *> parseSig <* skipSpace) semicolon
+        sigs = manyTill parseSig semicolon
 
 parseFormat :: Parser Statement
 parseFormat = do
@@ -138,7 +158,7 @@ parseFormat = do
     parseFormat'
 
 parseSig :: Parser Signal
-parseSig = Sig <$> takeWhile1 isSigChar
+parseSig = Sig <$> lexeme (takeWhile1 isSigChar)
 
 letter = letter_ascii
 
@@ -154,13 +174,8 @@ isSigChar :: Char -> Bool
 isSigChar c = isLetter c || DC.isDigit c || c `elem` "[]:_"
 
 semicolon :: Parser ()
-semicolon = void $ char ';'
+semicolon = void $ lexeme $ char ';'
 
 keyword :: ByteString -> Parser ()
-keyword kw = void $ string kw *> spaces
-
-spaces :: Parser ()
-spaces = do
-    A.takeWhile isSpace
-    return ()
+keyword kw = void $ lexeme $ string kw
 
