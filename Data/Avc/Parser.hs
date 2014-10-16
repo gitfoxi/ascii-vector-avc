@@ -118,12 +118,14 @@ parseEof = do
 -- TODO: returns "Partial _" if space until EOF
 lexeme :: Parser a -> Parser a
 lexeme pa = pa <* skipSpace
+{-# INLINE lexeme #-}
 
 parseRepeat :: Parser Statement
 parseRepeat = Repeat <$> (keyword "R" *> rep) <*> devcyc <*> parseVec <*> parseComment
     where
         rep = lexeme decimal
         devcyc = lexeme $ takeWhile1 isVecChar
+{-# INLINE parseRepeat #-}
 
 isVecChar :: Char -> Bool
 isVecChar c = A.isAlpha_ascii c || A.isDigit c
@@ -131,8 +133,13 @@ isVecChar c = A.isAlpha_ascii c || A.isDigit c
 
 parseVec :: Parser ByteString
 parseVec = do
-    vec <- manyTill (skipSpace *> A.takeWhile isVecChar) (skipSpace *> semicolon)
-    return $ BS.concat vec
+    -- This was 38% of time and 52% of allocation
+    -- vec <- manyTill (skipSpace *> A.takeWhile isVecChar) (skipSpace *> semicolon)
+    -- return $ BS.concat vec
+    -- This is slightly better. Not a huge win and maybe too haphazard
+    vec <- A.takeWhile (/= ';') <* semicolon
+    return $ BS.filter (/= ' ') vec
+{-# INLINE parseVec #-}
 
 
 parseFail :: String -> ByteString -> [String] -> String -> Statement
@@ -176,4 +183,5 @@ semicolon = void $ lexeme $ char ';'
 
 keyword :: ByteString -> Parser ()
 keyword kw = void $ lexeme $ string kw
+{-# INLINE keyword #-}
 

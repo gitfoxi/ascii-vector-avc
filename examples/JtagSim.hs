@@ -76,6 +76,13 @@ showMaybe = maybe "" show
 
 mapShowMaybe = map showMaybe
 
+-- TODO: Summarize each trasaction at the Exit1Dr, Exit1Ir state
+-- TODO: Use address info to lookup register and field names
+--       Problem: you get write data *before* you get address so how to decode fields. 2 passes? Buffering?
+--       You get read data in a subsequent completion after you sent the address
+-- TODO: Finish Yaml reader for looking up registers -- needs expression parser
+-- TODO: Chain with multiple TAPs
+
 -- Models group bits into fields, LSB first
 -- TODO: decode functions; for example
 --   command 0 -> address for subsequent write
@@ -102,7 +109,7 @@ octeonTapRegInModel = [ ("writeData", 64)
 data RegState = RegState { nextBit   :: Int -- within field
                          , nextFields :: [(String, Int)]
                          , bools     :: [Bool] }
-resetReg = RegState { nextBit = 0, bools = [] }
+resetReg = RegState { nextBit = 0, bools = [], nextFields = [] }
 
 modelTapReg   :: [(String, Int)]  -- [(fieldName, nbits)] -- register "model"
               -> Integer              -- (IR=)
