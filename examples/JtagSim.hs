@@ -16,10 +16,10 @@ import           Control.Monad.State
 
 import           Data.Bits (shiftL)
 import qualified Data.ByteString.Char8 as BS
-import           Data.List (elemIndex, intercalate, zip4, zip5)
+import           Data.List (elemIndex, intercalate, zip4, zip5, zip6, zipWith4, transpose)
 import qualified Data.List as List
 import           Data.List.Split (splitOn)
-import           Data.Maybe (isNothing, catMaybes, fromJust)
+import           Data.Maybe (isNothing, catMaybes, fromJust, fromMaybe, mapMaybe)
 
 import           Numeric (showHex)
 
@@ -34,6 +34,8 @@ import           JtagStateMachine (JtagState(..), jtagStateTrans)
 -- Place state of Jtag state machine in avc comments
 -- assume jtag signals use standard Cavium names for this simple example
 
+-- TODO: This pipeline is generally dodgy. Everything needs to be made synchronous to TCK!
+
 [trst, tck, tms, tdi, tdo] = splitOn " " "jtg_trst_n jtg_tck jtg_tms jtg_tdi jtg_tdo"
 sigNames = [trst, tck, tms, tdi, tdo]
 
@@ -45,8 +47,6 @@ main = do
     -- TODO: catch exception when no FORMAT found
     -- TODO: throw when AVC has unhadnled statement like LOOP which could throw me off a lot
     let idxs = getFormatIdxs statements sigNames
-    -- mapM (BS.putStrLn . toString) $ selectSigs idxs statements
-    -- let flatStates = flattenStatements statements
     let rep_jtagio = unpackSigs $ selectSigs idxs statements
     let jtagio = map snd rep_jtagio
     let sim = simStateMachine jtagio
@@ -55,13 +55,102 @@ main = do
     let dr = simDRegister sim jtagio
     let irReg = reg ir sim UpdateIr
     let drReg = reg dr sim UpdateDr
-    mapM_ print $ zip jtagio (squelch2 $ zip5 sim (hexStr <$> ir) (hexStr <$> dr) (hexStr <$> irReg) (hexStr <$> drReg))
+    let stdi = map (\x -> (not . BS.null) x && x `BS.index` 3 == '1') jtagio -- TODO: function
+    let stck = map (\x -> (not . BS.null) x && x `BS.index` 1 == '1') jtagio
+    let stdo = map (\x -> (not . BS.null) x && x `BS.index` 4 == 'H') jtagio
+    let notTck = map not stck
+    let irStat = map fst irReg
+    let octeonInReg = modelTapReg octeonTapRegInModel 0xc irStat sim stdi stck
+    let octeonOutReg = modelTapReg octeonTapRegOutModel 0xc irStat sim stdo notTck
+    mapM_ (putStrLn . intercalate " - ") $ transpose -- zip4 -- ) --  . intercalate "-" )
+         [ map BS.unpack jtagio 
+         , mapShowMaybe (squelch2 sim) 
+         , mapShowMaybe octeonInReg 
+         , mapShowMaybe octeonOutReg ]
     -- mapM_ print $ zip rep_jtagio sim
     -- Property: length sim == length jtagio -- but Len sim: 109744 Len jtagio: 109743
     hPutStrLn stderr $ "Len sim: " ++ show (length sim) ++ " Len jtagio: " ++ show (length jtagio)
 
+showMaybe :: Show a => Maybe a -> String
+showMaybe = maybe "" show
+
+mapShowMaybe = map showMaybe
+
+-- Models group bits into fields, LSB first
+-- TODO: decode functions; for example
+--   command 0 -> address for subsequent write
+--           1 -> write value in data field
+--           2 -> shift data from most recently accessed register (write or read)
+--           3 -> 
+--           ... well this is for the synopsys tapreg need to find info for octeon command
+--
+-- for octeon command is 3 -> read (both phases)
+--                       4 -> write
+octeonTapRegOutModel = [ ("readData", 64)
+                       , ("naRd", 125 - 64 + 1)
+                       , ("readComplete", 1)
+                       , ("commandAccepted", 1) ]
+
+octeonTapRegInModel = [ ("writeData", 64)
+                      , ("address", 103 - 64 + 1)
+                      , ("command", 4)
+                      , ("mask", 115 - 108 +1)
+                      , ("destId", 123 - 116 + 1)
+                      , ("naWr", 3)
+                      , ("doCommand", 1) ]
+
+data RegState = RegState { nextBit   :: Int -- within field
+                         , nextFields :: [(String, Int)]
+                         , bools     :: [Bool] }
+resetReg = RegState { nextBit = 0, bools = [] }
+
+modelTapReg   :: [(String, Int)]  -- [(fieldName, nbits)] -- register "model"
+              -> Integer              -- (IR=)
+              -> [Integer]            -- irStat
+              -> [JtagState]          -- tms; react to ShiftDr
+              -> [Bool]               -- tdi/tdo
+              -> [Bool]               -- tck (have to use (map not tck) for output
+              -> [Maybe String]       -- Just "readData=64x1234123412341234" | Nothing
+
+modelTapReg model irsel irstat0 jst0 sdat0 sclk0 =
+    evalState (mapM go (zip4 jst0 sdat0 sclk0 irstat0)) resetReg { nextFields = model }
+  where
+    go :: (JtagState, Bool, Bool, Integer) -> State RegState (Maybe String)
+    go (jst, sdat, sclk, irstat)
+        | not sclk = return Nothing -- TODO: edge, not level triggered
+        | irstat /= irsel = return Nothing
+        | jst == CaptureDr = do put resetReg { nextFields = model }
+                                return Nothing
+        | jst == ShiftDr = do rs <- get
+                              let rs' = rs { bools = sdat : bools rs
+                                           , nextBit = 1 + nextBit rs }
+                                  field = dbHead (nextFields rs')
+                                  (name, width) = field
+                                  havebits = nextBit rs'
+                                  havebools = bools rs'
+                              if havebits == width
+                              then do put rs { nextFields = safeTail $ nextFields rs
+                                             , nextBit = 0
+                                             , bools = [] }
+                                      return $ Just $ name
+                                                    ++ ":" ++ show width ++ "x"
+                                                    ++ showHex (fromBools havebools) ""
+                              else do put rs'
+                                      return Nothing
+        | otherwise = return Nothing
+    dbHead as | List.null as = ("???????", 1)
+              | otherwise    = head as
+
+-- This can be crashy if we look back at an exhausted model list so
+-- how to prove that's impossible?
+
+safeTail :: [a] -> [a]
+safeTail as | List.null as = []
+            | otherwise    = List.tail as
+
 -- remember the last updated value
-reg :: [(Integer, Integer)]                        -- simIRegister / simDRegister
+-- mostly to keep track of IR so I know which TAP-reg to hook to DR
+reg :: [(Integer, Integer)]                        -- simXRegister (in state, out state)
     -> [JtagState]                                 -- sim
     -> JtagState                                   -- UpdateIr
     -> [(Integer, Integer)]                        -- updated contents
