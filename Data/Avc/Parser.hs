@@ -100,7 +100,7 @@ getStatements = P.map getStatement
 -- getStatement "R1 cyc 123" -- TODO: doesn't return. some kind of inifinite loop without the ';'
 getStatement bs =
     case parseOnly (skipSpace *> parseStatement) bs of
-                    Left e -> error ("Error parsing FORMAT: " ++ show e ++ "\nInput:" ++ show bs)
+                    Left e -> error ("Error parsing : " ++ show e ++ "\nInput:" ++ show bs)
                     Right r -> r
 
 parseStatement :: Parser Statement
@@ -117,19 +117,15 @@ parseEof = do
 -- Parser A is like parser b but it skips trailing spaces
 -- TODO: returns "Partial _" if space until EOF
 lexeme :: Parser a -> Parser a
-lexeme pa = pa <* skipSpace
+lexeme pa = pa <* linespaces -- skipSpace
 {-# INLINE lexeme #-}
 
 parseRepeat :: Parser Statement
-parseRepeat = Repeat <$> (keyword "R" *> rep) <*> devcyc <*> parseVec <*> parseComment
+parseRepeat = Repeat <$> (keyword "R" *> rep) <*> devcyc <*> parseVec <*> parseComment <?> "Vector"
     where
         rep = lexeme decimal
-        devcyc = lexeme $ takeWhile1 isVecChar
+        devcyc = lexeme $ takeWhile1 isSigChar
 {-# INLINE parseRepeat #-}
-
-isVecChar :: Char -> Bool
-isVecChar c = A.isAlpha_ascii c || A.isDigit c
-{-# INLINE isVecChar #-}
 
 parseVec :: Parser ByteString
 parseVec = do
@@ -137,7 +133,7 @@ parseVec = do
     -- vec <- manyTill (skipSpace *> A.takeWhile isVecChar) (skipSpace *> semicolon)
     -- return $ BS.concat vec
     -- This is slightly better. Not a huge win and maybe too haphazard
-    vec <- A.takeWhile (/= ';') <* semicolon
+    vec <- A.takeWhile (/= ';') <* semicolon <?> "State characters"
     return $ BS.filter (/= ' ') vec
 {-# INLINE parseVec #-}
 
@@ -169,7 +165,7 @@ letter = letter_ascii
 
 parseComment :: Parser Comment
 parseComment = do
-    cmnt <- A.takeWhile (const True) <* endOfInput
+    cmnt <- A.takeWhile (/= '\n') <* (char '\n' <|> (return '\n' <* endOfInput))
     return $ Comment cmnt
 
 linespaces :: Parser ()
